@@ -18,7 +18,14 @@ struct IMessageSearchApp: App {
         }
         .defaultSize(width: 1_040, height: 720)
         .commands {
-            CommandGroup(after: .appInfo) {
+            // Adding a group *after* appInfo is ignored by SwiftUI on
+            // macOS 26. Replace the group so the updater command reliably
+            // appears in the application menu.
+            CommandGroup(replacing: .appInfo) {
+                Button("About iMessage Search") {
+                    NSApp.orderFrontStandardAboutPanel()
+                }
+                Divider()
                 Button("Check for Updates…") {
                     updaterController.checkForUpdates(nil)
                 }
