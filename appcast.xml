@@ -4,6 +4,16 @@
         <title>iMessage Search</title>
         <item>
             <title>1.0.0</title>
+            <pubDate>Thu, 06 Aug 2026 10:48:05 +0000</pubDate>
+            <link>https://github.com/safaribardia/imessage-search</link>
+            <sparkle:version>6</sparkle:version>
+            <sparkle:shortVersionString>1.0.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/safaribardia/imessage-search/releases/download/v1.0.0.6/iMessage-Search.dmg" length="3219029" type="application/octet-stream" sparkle:edSignature="XAjMvuTY1JR5b7bi/soi7UclpCzOVkWodIxGb9OfHDk9oxGFCtwlPX7FSDQd9clLwb5IuHDhZbwbu89GqvaiDA=="/>
+        </item>
+        <item>
+            <title>1.0.0</title>
             <pubDate>Thu, 06 Aug 2026 10:32:15 +0000</pubDate>
             <link>https://github.com/safaribardia/imessage-search</link>
             <sparkle:version>5</sparkle:version>
@@ -21,16 +31,6 @@
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/safaribardia/imessage-search/releases/download/v1.0.0.4/iMessage-Search.dmg" length="3066062" type="application/octet-stream" sparkle:edSignature="wpdMk76QgO3H8VPumMibbs60EtoFFHByYwWUakbC/EW9+5GiwyxNSumeCZxjPsoBUMbrsIt4R0zlilfVBXXLAQ=="/>
-        </item>
-        <item>
-            <title>1.0.0</title>
-            <pubDate>Thu, 06 Aug 2026 03:43:21 +0000</pubDate>
-            <link>https://github.com/safaribardia/imessage-search</link>
-            <sparkle:version>2</sparkle:version>
-            <sparkle:shortVersionString>1.0.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/safaribardia/imessage-search/releases/download/v1.0.0.2/iMessage-Search.dmg" length="3066120" type="application/octet-stream" sparkle:edSignature="VBL/9rXKfGDHNyMYp18OJDLW/fhSoPwFj/h8zjf5+4EYFewgj+f1naKwjAlJURK4jFDdFgkNGCxhWukEod0WAw=="/>
         </item>
     </channel>
 </rss>
