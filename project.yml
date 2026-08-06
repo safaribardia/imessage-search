@@ -7,6 +7,11 @@ settings:
   base:
     DEVELOPMENT_TEAM: 29ZVM64GLU
     CODE_SIGN_STYLE: Automatic
+    ENABLE_HARDENED_RUNTIME: YES
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.9.0"
 targets:
   MsgTool:
     type: tool
@@ -35,6 +40,15 @@ targets:
       - sdk: libsqlite3.tbd
       - target: MsgTool
         embed: false
+      - package: Sparkle
+    info:
+      path: IMessageSearch/Info.plist
+      properties:
+        SUFeedURL: https://raw.githubusercontent.com/safaribardia/imessage-search/main/appcast.xml
+        SUPublicEDKey: sZgdCL1p65dGDZ3aq6eJbkMNuPTOke29yEKsJxEnQhs=
+        SUEnableAutomaticChecks: true
+        SUAutomaticallyUpdate: true
+        SUScheduledCheckInterval: 3600
     postBuildScripts:
       - name: Bundle msgtool helper
         script: cp "$BUILT_PRODUCTS_DIR/msgtool" "$TARGET_BUILD_DIR/$EXECUTABLE_FOLDER_PATH/msgtool"

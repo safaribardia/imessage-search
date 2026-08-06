@@ -1,0 +1,155 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - appcast.xml
+      - README.md
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  APP_NAME: iMessage Search
+  # No spaces: GitHub rewrites spaces in release asset names, breaking URLs.
+  DMG_NAME: iMessage-Search.dmg
+  TEAM_ID: 29ZVM64GLU
+  SIGN_IDENTITY: "Developer ID Application: Olive Financial, Inc. (29ZVM64GLU)"
+  SPARKLE_VERSION: 2.9.5
+
+jobs:
+  release:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select latest Xcode
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+
+      - name: Install tools
+        run: brew install xcodegen create-dmg
+
+      - name: Import signing certificate
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          echo "$MACOS_CERT_P12" | base64 -d > /tmp/cert.p12
+          security create-keychain -p ci-password build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p ci-password build.keychain
+          security set-keychain-settings -lut 21600 build.keychain
+          security import /tmp/cert.p12 -k build.keychain -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci-password build.keychain > /dev/null
+          rm /tmp/cert.p12
+
+      - name: Determine version
+        id: version
+        run: |
+          MARKETING=$(sed -n 's/ *MARKETING_VERSION: "\(.*\)"/\1/p' project.yml)
+          echo "marketing=$MARKETING" >> "$GITHUB_OUTPUT"
+          echo "tag=v$MARKETING.$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: |
+          xcodegen generate
+          xcodebuild \
+            -project IMessageSearch.xcodeproj \
+            -scheme IMessageSearch \
+            -configuration Release \
+            -derivedDataPath .build \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="$SIGN_IDENTITY" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            OTHER_CODE_SIGN_FLAGS="--timestamp" \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
+            build
+
+      - name: Verify signature
+        run: |
+          APP=".build/Build/Products/Release/$APP_NAME.app"
+          codesign --verify --deep --strict "$APP"
+          codesign -dv "$APP" 2>&1 | grep TeamIdentifier
+
+      - name: Create DMG
+        run: |
+          mkdir -p dist/dmg-staging
+          cp -R ".build/Build/Products/Release/$APP_NAME.app" dist/dmg-staging/
+          # create-dmg drives Finder for the icon layout, which is flaky on
+          # headless runners; retry a few times.
+          for attempt in 1 2 3; do
+            if create-dmg \
+              --volname "$APP_NAME" \
+              --window-pos 200 160 \
+              --window-size 600 380 \
+              --icon-size 100 \
+              --icon "$APP_NAME.app" 150 170 \
+              --app-drop-link 450 170 \
+              --hide-extension "$APP_NAME.app" \
+              --codesign "$SIGN_IDENTITY" \
+              "dist/$DMG_NAME" \
+              dist/dmg-staging; then
+              break
+            fi
+            echo "create-dmg attempt $attempt failed; retrying"
+            rm -f "dist/$DMG_NAME"
+            sleep 5
+            [ "$attempt" = "3" ] && exit 1
+          done
+
+      - name: Notarize and staple
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          xcrun notarytool submit "dist/$DMG_NAME" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$TEAM_ID" \
+            --wait
+          xcrun stapler staple "dist/$DMG_NAME"
+          spctl --assess --type open --context context:primary-signature "dist/$DMG_NAME"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release create "$TAG" \
+            --title "$APP_NAME ${{ steps.version.outputs.marketing }} (${{ github.run_number }})" \
+            --generate-notes \
+            "dist/$DMG_NAME"
+
+      - name: Generate and publish appcast
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release download --repo sparkle-project/Sparkle "$SPARKLE_VERSION" \
+            --pattern "Sparkle-$SPARKLE_VERSION.tar.xz" -D /tmp/sparkle
+          tar -xf "/tmp/sparkle/Sparkle-$SPARKLE_VERSION.tar.xz" -C /tmp/sparkle
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > /tmp/sparkle_key
+
+          # generate_appcast reads the app inside the DMG for version info
+          # and signs the enclosure with the EdDSA key.
+          mkdir -p appcast-work
+          cp "dist/$DMG_NAME" appcast-work/
+          /tmp/sparkle/bin/generate_appcast \
+            --ed-key-file /tmp/sparkle_key \
+            --download-url-prefix "https://github.com/${{ github.repository }}/releases/download/$TAG/" \
+            --link "https://github.com/${{ github.repository }}" \
+            -o appcast.xml \
+            appcast-work
+          rm /tmp/sparkle_key
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add appcast.xml
+          git commit -m "Update appcast for $TAG [skip ci]"
+          git push

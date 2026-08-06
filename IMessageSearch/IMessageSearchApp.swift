@@ -1,13 +1,29 @@
 import AppKit
+import Sparkle
 import SwiftUI
 
 @main
 struct IMessageSearchApp: App {
+    // Starts Sparkle with the app: checks the appcast on a schedule and
+    // installs updates automatically (SUAutomaticallyUpdate in Info.plist).
+    private let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
+
     var body: some Scene {
         WindowGroup {
             AppRootView()
         }
         .defaultSize(width: 1_040, height: 720)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    updaterController.checkForUpdates(nil)
+                }
+            }
+        }
     }
 }
 
