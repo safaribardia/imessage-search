@@ -275,12 +275,17 @@ final class IndexStore {
     func semanticSearch(
         embedding: [Float],
         model: EmbeddingModel,
-        limit: Int
+        limit: Int,
+        chatIDs: Set<Int64>? = nil
     ) throws -> [SearchResult] {
         let matrix = try embeddingMatrix(for: model)
         guard matrix.dimension == embedding.count, !matrix.windowIDs.isEmpty else {
             return []
         }
+
+        // A chat scope prefilters the ranked rows so the limit is spent
+        // entirely on in-scope windows.
+        let allowedWindowIDs = try chatIDs.map(windowIDs(forChatIDs:))
 
         let rowCount = matrix.windowIDs.count
         var scores = [Float](repeating: 0, count: rowCount)
@@ -300,6 +305,9 @@ final class IndexStore {
         }
 
         let topRows = scores.enumerated()
+            .filter { row, _ in
+                allowedWindowIDs?.contains(matrix.windowIDs[row]) ?? true
+            }
             .sorted { $0.element > $1.element }
             .prefix(limit)
 
@@ -310,6 +318,29 @@ final class IndexStore {
             }
         }
         return results
+    }
+
+    private func windowIDs(forChatIDs chatIDs: Set<Int64>) throws -> Set<String> {
+        guard !chatIDs.isEmpty else {
+            return []
+        }
+        let placeholders = chatIDs.map { _ in "?" }.joined(separator: ",")
+        let statement = try prepare(
+            "SELECT id FROM windows WHERE chat_id IN (\(placeholders))"
+        )
+        defer { sqlite3_finalize(statement) }
+        for (index, chatID) in chatIDs.enumerated() {
+            sqlite3_bind_int64(statement, Int32(index + 1), chatID)
+        }
+
+        var ids: Set<String> = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if let id = columnText(statement, index: 0) {
+                ids.insert(id)
+            }
+        }
+        try ensureStatementFinished(statement)
+        return ids
     }
 
     private func embeddingMatrix(for model: EmbeddingModel) throws -> EmbeddingMatrix {
@@ -468,11 +499,20 @@ final class IndexStore {
         return results
     }
 
-    func keywordSearch(query: String, limit: Int) throws -> [SearchResult] {
+    func keywordSearch(
+        query: String,
+        limit: Int,
+        chatIDs: Set<Int64>? = nil
+    ) throws -> [SearchResult] {
         guard !query.isEmpty else {
             return []
         }
 
+        var scopeClause = ""
+        if let chatIDs {
+            let placeholders = chatIDs.map { _ in "?" }.joined(separator: ",")
+            scopeClause = "AND w.chat_id IN (\(placeholders))"
+        }
         let statement = try prepare(
             """
             SELECT
@@ -481,13 +521,19 @@ final class IndexStore {
             FROM windows_fts
             JOIN windows AS w ON w.id = windows_fts.window_id
             WHERE windows_fts MATCH ?
+            \(scopeClause)
             ORDER BY bm25(windows_fts)
             LIMIT ?
             """
         )
         defer { sqlite3_finalize(statement) }
         try bind(query, to: 1, in: statement)
-        sqlite3_bind_int(statement, 2, Int32(limit))
+        var bindIndex: Int32 = 2
+        for chatID in chatIDs ?? [] {
+            sqlite3_bind_int64(statement, bindIndex, chatID)
+            bindIndex += 1
+        }
+        sqlite3_bind_int(statement, bindIndex, Int32(limit))
 
         var results: [SearchResult] = []
         while sqlite3_step(statement) == SQLITE_ROW {

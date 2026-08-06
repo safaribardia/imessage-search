@@ -9,6 +9,52 @@ struct MessageRecord: Sendable {
     let text: String
 }
 
+struct MessageConversation: Identifiable, Sendable {
+    enum Kind: Sendable {
+        case person(handle: String)
+        case group(rawName: String, participants: [String])
+    }
+
+    let kind: Kind
+    /// Handle ROWID for people, chat ROWID for group chats.
+    let rowID: Int64
+    let lastMessageDate: Date
+
+    var id: String {
+        switch kind {
+        case .person:
+            "person-\(rowID)"
+        case .group:
+            "group-\(rowID)"
+        }
+    }
+
+    var isGroup: Bool {
+        if case .group = kind {
+            return true
+        }
+        return false
+    }
+
+    func title(using map: HandleNameMap) -> String {
+        switch kind {
+        case .person(let handle):
+            map.displayName(for: handle)
+        case .group(let rawName, let participants):
+            map.chatTitle(rawName: rawName, participants: participants)
+        }
+    }
+}
+
+struct PersonHistoryMessage: Identifiable, Sendable {
+    let id: Int64
+    let sender: String
+    let date: Date
+    let text: String
+
+    var isFromMe: Bool { sender == "Me" }
+}
+
 struct ConversationWindow: Identifiable, Sendable {
     let id: String
     let chatID: Int64

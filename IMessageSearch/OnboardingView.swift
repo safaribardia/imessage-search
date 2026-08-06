@@ -975,7 +975,7 @@ private struct ProviderPanel: View {
     private var detail: String {
         switch provider {
         case .chatGPT:
-            "Relevant excerpts may be sent to ChatGPT to answer your question. The complete index is never uploaded."
+            "Relevant excerpts may be sent to Codex to answer your question. It connects to your ChatGPT account to use limits directly."
         case .ollama:
             "Search and answer generation stay on this Mac through Ollama."
         }

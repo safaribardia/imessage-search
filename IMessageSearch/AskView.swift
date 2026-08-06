@@ -194,15 +194,17 @@ private struct UserBubble: View {
         HStack {
             Spacer(minLength: 80)
             Text(content)
+                .font(.system(size: 14))
+                .lineSpacing(1.5)
                 .foregroundStyle(colorScheme == .dark ? Color.black : Color.white)
                 .textSelection(.enabled)
                 .padding(.horizontal, 13)
-                .padding(.vertical, 8)
+                .padding(.vertical, 7.5)
                 .background(
                     colorScheme == .dark
                         ? Color.white.opacity(0.92)
                         : Color.black.opacity(0.85),
-                    in: RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    in: RoundedRectangle(cornerRadius: 18, style: .continuous)
                 )
         }
     }

@@ -29,7 +29,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var canLoadLaterContext = true
     private var isExtendingContext = false
 
-    private let engine: SearchEngine
+    /// Shared with PeopleModel so thread-scoped search reuses the same
+    /// index store and embedding cache.
+    let engine: SearchEngine
     private var generationTask: Task<Void, Never>?
     private var syncTask: Task<Void, Never>?
     private var qualityInstallTask: Task<Void, Never>?

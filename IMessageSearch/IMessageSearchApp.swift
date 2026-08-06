@@ -141,46 +141,74 @@ private struct AppRootView: View {
     }
 }
 
+private enum AppTab: Hashable {
+    case chat
+    case people
+}
+
+/// Set by ContentView (which owns the tab selection and the People model) so
+/// the context sheet can jump to a message in the People tab without global
+/// notifications. Nil wherever that navigation isn't available.
+private struct RevealMessageInPeopleKey: EnvironmentKey {
+    static let defaultValue: (@MainActor (Int64) -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    var revealMessageInPeople: (@MainActor (Int64) -> Void)? {
+        get { self[RevealMessageInPeopleKey.self] }
+        set { self[RevealMessageInPeopleKey.self] = newValue }
+    }
+}
+
 private struct ContentView: View {
     @ObservedObject var model: AppModel
+    @StateObject private var peopleModel = PeopleModel()
+    @State private var selectedTab = AppTab.chat
 
     var body: some View {
         NavigationSplitView {
-            Sidebar(model: model)
+            MainSidebar(
+                selectedTab: $selectedTab,
+                chatModel: model,
+                peopleModel: peopleModel
+            )
         } detail: {
             Group {
-                switch model.section {
-                case .search:
-                    SearchView(model: model)
-                case .ask:
-                    AskView(model: model)
-                case .settings:
-                    SettingsView(model: model)
-                }
-            }
-            .safeAreaInset(edge: .top, spacing: 0) {
-                if let errorMessage = model.errorMessage {
-                    ErrorBanner(message: errorMessage, model: model)
-                }
-            }
-            // Attached to the detail content (not the split view) so the
-            // field belongs to the detail column's toolbar and sits at its
-            // trailing edge.
-            .searchable(
-                text: $model.query,
-                prompt: "Search your messages"
-            )
-            .toolbar {
-                // The system places the search field leading by default in
-                // this layout; a flexible spacer before the search item
-                // pushes it to the trailing edge.
-                if #available(macOS 26.0, *) {
-                    ToolbarSpacer(.flexible)
-                    DefaultToolbarItem(kind: .search)
+                switch selectedTab {
+                case .chat:
+                    ChatDetail(model: model)
+                        .environment(\.revealMessageInPeople) { messageID in
+                            selectedTab = .people
+                            peopleModel.reveal(messageID: messageID)
+                        }
+                case .people:
+                    PeopleDetail(model: peopleModel)
+                        .safeAreaInset(edge: .top, spacing: 0) {
+                            if let errorMessage = peopleModel.errorMessage {
+                                PeopleErrorBanner(message: errorMessage)
+                            }
+                        }
+                        .searchable(
+                            text: $peopleModel.threadQuery,
+                            prompt: "Search this conversation"
+                        )
+                        .toolbar {
+                            if #available(macOS 26.0, *) {
+                                ToolbarSpacer(.flexible)
+                                DefaultToolbarItem(kind: .search)
+                            }
+                        }
                 }
             }
         }
-        .onSubmit(of: .search, model.search)
+        .onSubmit(of: .search) {
+            switch selectedTab {
+            case .chat:
+                model.search()
+            case .people:
+                peopleModel.searchThread()
+            }
+        }
         .toolbarBackground(.hidden, for: .windowToolbar)
         .modifier(RemoveTitleToolbarItem())
         .toolbar {
@@ -200,11 +228,128 @@ private struct ContentView: View {
                 model.exitSearch()
             }
         }
+        .onChange(of: peopleModel.threadQuery) {
+            if peopleModel.threadQuery.isEmpty {
+                peopleModel.exitThreadSearch()
+            }
+        }
         .task {
+            peopleModel.attach(engine: model.engine)
             model.start()
+            peopleModel.start()
         }
         .onDisappear {
             model.stop()
+        }
+    }
+}
+
+private struct MainSidebar: View {
+    @Binding var selectedTab: AppTab
+    @ObservedObject var chatModel: AppModel
+    @ObservedObject var peopleModel: PeopleModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            SidebarTabSwitcher(selectedTab: $selectedTab)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 10)
+                .padding(.top, 10)
+                .padding(.bottom, 8)
+
+            switch selectedTab {
+            case .chat:
+                Sidebar(model: chatModel)
+            case .people:
+                PeopleSidebar(model: peopleModel)
+            }
+
+            // Pinned below both tabs; opening Settings always routes through
+            // the Chat detail, which is where SettingsView lives.
+            AccountPane(
+                isSelected: selectedTab == .chat && chatModel.section == .settings
+            ) {
+                if selectedTab == .chat {
+                    chatModel.toggleSettings()
+                } else {
+                    selectedTab = .chat
+                    chatModel.section = .settings
+                }
+            }
+        }
+        .navigationSplitViewColumnWidth(min: 220, ideal: 256, max: 340)
+    }
+}
+
+/// Two bare text tabs; only the active one carries a capsule highlight.
+private struct SidebarTabSwitcher: View {
+    @Binding var selectedTab: AppTab
+
+    var body: some View {
+        HStack(spacing: 4) {
+            tab("Chat", .chat)
+            tab("People", .people)
+        }
+    }
+
+    private func tab(_ title: String, _ tab: AppTab) -> some View {
+        Button {
+            selectedTab = tab
+        } label: {
+            Text(title)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(selectedTab == tab ? .primary : .secondary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule().fill(
+                        selectedTab == tab
+                            ? Color.primary.opacity(0.1)
+                            : Color.clear
+                    )
+                )
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
+    }
+}
+
+private struct ChatDetail: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        Group {
+            switch model.section {
+            case .search:
+                SearchView(model: model)
+            case .ask:
+                AskView(model: model)
+            case .settings:
+                SettingsView(model: model)
+            }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let errorMessage = model.errorMessage {
+                ErrorBanner(message: errorMessage, model: model)
+            }
+        }
+        // Attached to the detail content (not the split view) so the
+        // field belongs to the detail column's toolbar and sits at its
+        // trailing edge.
+        .searchable(
+            text: $model.query,
+            prompt: "Search your messages"
+        )
+        .toolbar {
+            // The system places the search field leading by default in
+            // this layout; a flexible spacer before the search item
+            // pushes it to the trailing edge.
+            if #available(macOS 26.0, *) {
+                ToolbarSpacer(.flexible)
+                DefaultToolbarItem(kind: .search)
+            }
         }
     }
 }
@@ -258,9 +403,6 @@ private struct Sidebar: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 QualityIndexPane(model: model)
-                AccountPane(isSelected: model.section == .settings) {
-                    model.toggleSettings()
-                }
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
         }
@@ -725,11 +867,11 @@ struct TranscriptBubbleList: View {
 
     var body: some View {
         if isLazy {
-            LazyVStack(spacing: 3) {
+            LazyVStack(spacing: 4) {
                 rows
             }
         } else {
-            VStack(spacing: 3) {
+            VStack(spacing: 4) {
                 rows
             }
         }
@@ -781,17 +923,18 @@ struct TranscriptBubbleList: View {
                     Text(contacts.map.displayName(for: message.sender))
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
-                        .padding(.leading, 10)
+                        .padding(.leading, 13)
                 }
                 Text(message.text)
-                    .font(.callout)
+                    .font(.system(size: 14))
+                    .lineSpacing(1.5)
                     .lineLimit(lineLimit)
                     .foregroundStyle(Color.primary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5.5)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 7.5)
                     .background(
                         message.isFromMe ? myBubbleFill : otherBubbleFill,
-                        in: RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        in: RoundedRectangle(cornerRadius: 18, style: .continuous)
                     )
                     .textSelection(.enabled)
             }
@@ -815,7 +958,8 @@ struct TranscriptBubbleList: View {
     }
 }
 
-private struct SearchResultRow: View {
+// Shared with the People tab's in-conversation search.
+struct SearchResultRow: View {
     let result: SearchResult
     let onOpen: () -> Void
     @ObservedObject private var contacts = ContactsResolver.shared
@@ -881,8 +1025,14 @@ struct ConversationContextSheet: View {
     @ObservedObject var model: AppModel
     let result: SearchResult
     @ObservedObject private var contacts = ContactsResolver.shared
+    @Environment(\.revealMessageInPeople) private var revealMessageInPeople
     /// First item before a prepend; scrolling back to it keeps the view stable.
     @State private var pendingTopAnchorID: String?
+    /// The scroll view opens at the top, so row 0 "appears" before the initial
+    /// scroll to the match runs. Pagination stays disabled until the match is
+    /// positioned, otherwise an immediate prepend re-anchors the view to the
+    /// top and yanks it away from the match.
+    @State private var hasCompletedInitialScroll = false
 
     private var merged: (items: [TranscriptBubbleItem], firstMatchID: String?) {
         Self.mergeWindows(model.contextWindows, matchedID: result.id)
@@ -907,6 +1057,16 @@ struct ConversationContextSheet: View {
                     .font(.headline)
                     .lineLimit(1)
                 Spacer(minLength: 12)
+                if let revealMessageInPeople,
+                   let firstMessageID = result.messageIDs.first {
+                    Button("See full chat") {
+                        model.contextResult = nil
+                        revealMessageInPeople(firstMessageID)
+                    }
+                    .buttonStyle(QuietButtonStyle())
+                    .pointingHandCursor()
+                    .help("Open this conversation in the People tab")
+                }
                 Button("Done") {
                     model.contextResult = nil
                 }
@@ -929,7 +1089,8 @@ struct ConversationContextSheet: View {
                             items: merged.items,
                             isLazy: true,
                             onReachTop: {
-                                guard model.canLoadEarlierContext,
+                                guard hasCompletedInitialScroll,
+                                      model.canLoadEarlierContext,
                                       pendingTopAnchorID == nil else {
                                     return
                                 }
@@ -940,11 +1101,24 @@ struct ConversationContextSheet: View {
                                 model.loadLaterContext()
                             }
                         )
-                        .padding(16)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 18)
                     }
                     .onAppear {
-                        if let firstMatchID = merged.firstMatchID {
-                            proxy.scrollTo(firstMatchID, anchor: .center)
+                        guard let firstMatchID = merged.firstMatchID else {
+                            hasCompletedInitialScroll = true
+                            return
+                        }
+                        proxy.scrollTo(firstMatchID, anchor: .center)
+                        // Lazy rows materialize with estimated heights, so a
+                        // single scrollTo lands off-center. Repeat as layout
+                        // settles, then unlock pagination.
+                        Task { @MainActor in
+                            for _ in 0..<3 {
+                                try? await Task.sleep(for: .milliseconds(80))
+                                proxy.scrollTo(firstMatchID, anchor: .center)
+                            }
+                            hasCompletedInitialScroll = true
                         }
                     }
                     .onChange(of: model.contextWindows.count) {

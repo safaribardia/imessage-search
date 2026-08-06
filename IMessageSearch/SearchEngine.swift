@@ -250,8 +250,13 @@ actor SearchEngine {
             : .fast
     }
 
-    func search(query: String) async throws -> [SearchResult] {
-        try await hybridResults(query: query, limit: 10)
+    /// Passing chatIDs scopes the search to those chat.db chat ROWIDs (used
+    /// by the People tab to search within one conversation).
+    func search(
+        query: String,
+        chatIDs: Set<Int64>? = nil
+    ) async throws -> [SearchResult] {
+        try await hybridResults(query: query, limit: 10, chatIDs: chatIDs)
     }
 
     func conversationContext(
@@ -640,7 +645,8 @@ actor SearchEngine {
 
     private func hybridResults(
         query: String,
-        limit: Int
+        limit: Int,
+        chatIDs: Set<Int64>? = nil
     ) async throws -> [SearchResult] {
         // Capture once so a quality-index completion during this search
         // cannot mix query and document vectors from different models.
@@ -654,11 +660,13 @@ actor SearchEngine {
         let semantic = try store.semanticSearch(
             embedding: embedding,
             model: model,
-            limit: 30
+            limit: 30,
+            chatIDs: chatIDs
         )
         let keyword = try store.keywordSearch(
             query: ftsQuery(query),
-            limit: 30
+            limit: 30,
+            chatIDs: chatIDs
         )
         return merge(semantic: semantic, keyword: keyword, limit: limit)
     }

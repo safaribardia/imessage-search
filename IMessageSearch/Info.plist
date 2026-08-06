@@ -19,9 +19,9 @@
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>SUAutomaticallyUpdate</key>
-	<true/>
+	<string>$(SU_ENABLE_UPDATES)</string>
 	<key>SUEnableAutomaticChecks</key>
-	<true/>
+	<string>$(SU_ENABLE_UPDATES)</string>
 	<key>SUFeedURL</key>
 	<string>https://raw.githubusercontent.com/safaribardia/imessage-search/main/appcast.xml</string>
 	<key>SUPublicEDKey</key>
