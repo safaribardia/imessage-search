@@ -1,0 +1,7 @@
+.build/
+dist/
+IMessageSearch.xcodeproj/
+.DS_Store
+*.p12
+*.dmg
+sparkle-tools/
