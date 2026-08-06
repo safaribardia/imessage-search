@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 final class PeopleModel: ObservableObject {
@@ -277,7 +278,13 @@ final class PeopleModel: ObservableObject {
                 let sender = message.isFromMe
                     ? "Me"
                     : map.displayName(for: message.sender)
-                return "\(sender): \(message.text)"
+                let attachmentNames = message.attachments
+                    .map { "[Attachment: \($0.name)]" }
+                    .joined(separator: " ")
+                let content = [message.text, attachmentNames]
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " ")
+                return "\(sender): \(content)"
             }
             .joined(separator: "\n")
         let pasteboard = NSPasteboard.general
@@ -828,33 +835,22 @@ private struct PersonMessageBubble: View {
                     timestamp
                 }
 
-                SelectableBubbleText(
-                    text: message.text,
-                    textColor: message.isFromMe ? outgoingTextColor : .labelColor,
-                    onClick: onClick
-                )
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 7.5)
-                    .background(
-                        message.isFromMe ? outgoingFill : incomingFill,
-                        in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .strokeBorder(
-                                selectionRing.opacity(isSelected ? 1 : 0),
-                                lineWidth: 1.5
-                            )
-                    )
-                    .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    // The native selectable text view handles clicks on its
-                    // glyphs; this catches clicks in the bubble's padding.
-                    .simultaneousGesture(
-                        TapGesture().onEnded {
-                            onClick(NSEvent.modifierFlags.contains(.shift))
-                        }
-                    )
+                VStack(
+                    alignment: message.isFromMe ? .trailing : .leading,
+                    spacing: 4
+                ) {
+                    ForEach(message.attachments) { attachment in
+                        MessageAttachmentView(
+                            attachment: attachment,
+                            isSelected: isSelected,
+                            onClick: onClick
+                        )
+                    }
+
+                    if !message.text.isEmpty {
+                        textBubble
+                    }
+                }
 
                 if !message.isFromMe {
                     timestamp
@@ -864,6 +860,36 @@ private struct PersonMessageBubble: View {
         }
         .padding(.vertical, 1)
         .onHover { isHovered = $0 }
+    }
+
+    private var textBubble: some View {
+        SelectableBubbleText(
+            text: message.text,
+            textColor: message.isFromMe ? outgoingTextColor : .labelColor,
+            onClick: onClick
+        )
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.horizontal, 13)
+        .padding(.vertical, 7.5)
+        .background(
+            message.isFromMe ? outgoingFill : incomingFill,
+            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(
+                    selectionRing.opacity(isSelected ? 1 : 0),
+                    lineWidth: 1.5
+                )
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        // The native selectable text view handles clicks on its glyphs; this
+        // catches clicks in the bubble's padding.
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                onClick(NSEvent.modifierFlags.contains(.shift))
+            }
+        )
     }
 
     /// Sits beside the bubble and only appears while hovering, so the
@@ -894,6 +920,139 @@ private struct PersonMessageBubble: View {
 
     private var incomingFill: Color {
         Color.primary.opacity(0.07)
+    }
+}
+
+private struct MessageAttachmentView: View {
+    let attachment: MessageAttachment
+    let isSelected: Bool
+    let onClick: (Bool) -> Void
+
+    private let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+
+    private var availableURL: URL? {
+        guard let url = attachment.localURL,
+              FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+        return url
+    }
+
+    private var isImage: Bool {
+        if let uti = attachment.uti,
+           let type = UTType(uti),
+           type.conforms(to: .image) {
+            return true
+        }
+        return attachment.mimeType?.hasPrefix("image/") == true
+    }
+
+    private var image: NSImage? {
+        guard isImage, let url = availableURL else {
+            return nil
+        }
+        return NSImage(contentsOf: url)
+    }
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(
+                        maxWidth: attachment.isSticker ? 160 : 320,
+                        maxHeight: attachment.isSticker ? 160 : 260
+                    )
+                    .clipShape(shape)
+            } else {
+                fileCard
+            }
+        }
+        .overlay(
+            shape.strokeBorder(
+                Color(nsColor: .systemBlue).opacity(isSelected ? 1 : 0),
+                lineWidth: 1.5
+            )
+        )
+        .contentShape(shape)
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                onClick(NSEvent.modifierFlags.contains(.shift))
+            }
+        )
+        .onTapGesture(count: 2, perform: open)
+        .help(availableURL == nil ? "Attachment is not available on this Mac" : "Double-click to open")
+        .contextMenu {
+            if let url = availableURL {
+                Button("Open") {
+                    NSWorkspace.shared.open(url)
+                }
+                Button("Show in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
+            }
+        }
+    }
+
+    private var fileCard: some View {
+        HStack(spacing: 10) {
+            Group {
+                if let url = availableURL {
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                        .resizable()
+                        .scaledToFit()
+                } else {
+                    Image(systemName: "paperclip")
+                        .font(.system(size: 18))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 28, height: 28)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(attachment.name)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            if availableURL != nil {
+                Image(systemName: "arrow.up.forward")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(width: 260)
+        .background(Color.primary.opacity(0.07), in: shape)
+    }
+
+    private var detail: String {
+        guard availableURL != nil else {
+            return "Not downloaded on this Mac"
+        }
+        guard attachment.byteCount > 0 else {
+            return attachment.mimeType ?? "Attachment"
+        }
+        return ByteCountFormatter.string(
+            fromByteCount: attachment.byteCount,
+            countStyle: .file
+        )
+    }
+
+    private func open() {
+        guard let url = availableURL else {
+            return
+        }
+        NSWorkspace.shared.open(url)
     }
 }
 

@@ -42,7 +42,15 @@ struct MessagesReader {
         AND m.is_system_message = 0
         AND m.is_service_message = 0
         AND COALESCE(m.date_retracted, 0) = 0
-        AND (NULLIF(m.text, '') IS NOT NULL OR m.attributedBody IS NOT NULL)
+        AND (
+            NULLIF(m.text, '') IS NOT NULL
+            OR m.attributedBody IS NOT NULL
+            OR EXISTS (
+                SELECT 1
+                FROM message_attachment_join AS attachment_join
+                WHERE attachment_join.message_id = m.ROWID
+            )
+        )
         """
 
     func checkAccess() throws {
@@ -188,7 +196,15 @@ struct MessagesReader {
               AND m.is_system_message = 0
               AND m.is_service_message = 0
               AND COALESCE(m.date_retracted, 0) = 0
-              AND (NULLIF(m.text, '') IS NOT NULL OR m.attributedBody IS NOT NULL)
+              AND (
+                  NULLIF(m.text, '') IS NOT NULL
+                  OR m.attributedBody IS NOT NULL
+                  OR EXISTS (
+                      SELECT 1
+                      FROM message_attachment_join AS attachment_join
+                      WHERE attachment_join.message_id = m.ROWID
+                  )
+              )
             GROUP BY h.ROWID, h.id
             ORDER BY MAX(m.date) DESC, h.id COLLATE NOCASE
             """
@@ -243,7 +259,15 @@ struct MessagesReader {
               AND m.is_system_message = 0
               AND m.is_service_message = 0
               AND COALESCE(m.date_retracted, 0) = 0
-              AND (NULLIF(m.text, '') IS NOT NULL OR m.attributedBody IS NOT NULL)
+              AND (
+                  NULLIF(m.text, '') IS NOT NULL
+                  OR m.attributedBody IS NOT NULL
+                  OR EXISTS (
+                      SELECT 1
+                      FROM message_attachment_join AS attachment_join
+                      WHERE attachment_join.message_id = m.ROWID
+                  )
+              )
             GROUP BY c.ROWID
             ORDER BY MAX(m.date) DESC
             """
@@ -312,7 +336,15 @@ struct MessagesReader {
               AND m.is_system_message = 0
               AND m.is_service_message = 0
               AND COALESCE(m.date_retracted, 0) = 0
-              AND (NULLIF(m.text, '') IS NOT NULL OR m.attributedBody IS NOT NULL)
+              AND (
+                  NULLIF(m.text, '') IS NOT NULL
+                  OR m.attributedBody IS NOT NULL
+                  OR EXISTS (
+                      SELECT 1
+                      FROM message_attachment_join AS attachment_join
+                      WHERE attachment_join.message_id = m.ROWID
+                  )
+              )
             ORDER BY m.date DESC, m.ROWID DESC
             LIMIT ? OFFSET ?
             """
@@ -363,7 +395,15 @@ struct MessagesReader {
               AND m.is_system_message = 0
               AND m.is_service_message = 0
               AND COALESCE(m.date_retracted, 0) = 0
-              AND (NULLIF(m.text, '') IS NOT NULL OR m.attributedBody IS NOT NULL)
+              AND (
+                  NULLIF(m.text, '') IS NOT NULL
+                  OR m.attributedBody IS NOT NULL
+                  OR EXISTS (
+                      SELECT 1
+                      FROM message_attachment_join AS attachment_join
+                      WHERE attachment_join.message_id = m.ROWID
+                  )
+              )
             ORDER BY m.date DESC, m.ROWID DESC
             LIMIT ? OFFSET ?
             """
@@ -518,19 +558,57 @@ struct MessagesReader {
         _ statement: OpaquePointer?,
         database: OpaquePointer
     ) throws -> [PersonHistoryMessage] {
+        let attachmentSQL = """
+            SELECT
+                a.ROWID,
+                a.filename,
+                a.uti,
+                a.mime_type,
+                a.transfer_name,
+                a.total_bytes,
+                a.is_sticker
+            FROM attachment AS a
+            JOIN message_attachment_join AS attachment_join
+              ON attachment_join.attachment_id = a.ROWID
+            WHERE attachment_join.message_id = ?
+              AND COALESCE(a.hide_attachment, 0) = 0
+            ORDER BY a.ROWID
+            """
+        var attachmentStatement: OpaquePointer?
+        guard sqlite3_prepare_v2(
+            database,
+            attachmentSQL,
+            -1,
+            &attachmentStatement,
+            nil
+        ) == SQLITE_OK else {
+            throw MessagesReaderError.databaseError(errorMessage(database))
+        }
+        defer { sqlite3_finalize(attachmentStatement) }
+
         var messages: [PersonHistoryMessage] = []
         while sqlite3_step(statement) == SQLITE_ROW {
+            let messageID = sqlite3_column_int64(statement, 0)
+            let attachments = try attachments(
+                for: messageID,
+                using: attachmentStatement,
+                database: database
+            )
             let text = messageText(
                 from: statement,
                 textColumn: 3,
                 bodyColumn: 4
-            ) ?? "Attachment"
+            ) ?? ""
+            guard !text.isEmpty || !attachments.isEmpty else {
+                continue
+            }
             messages.append(
                 PersonHistoryMessage(
-                    id: sqlite3_column_int64(statement, 0),
+                    id: messageID,
                     sender: columnText(statement, index: 1) ?? "Unknown",
                     date: messageDate(sqlite3_column_int64(statement, 2)),
-                    text: text
+                    text: text,
+                    attachments: attachments
                 )
             )
         }
@@ -540,6 +618,49 @@ struct MessagesReader {
             throw MessagesReaderError.databaseError(errorMessage(database))
         }
         return Array(messages.reversed())
+    }
+
+    private func attachments(
+        for messageID: Int64,
+        using statement: OpaquePointer?,
+        database: OpaquePointer
+    ) throws -> [MessageAttachment] {
+        sqlite3_bind_int64(statement, 1, messageID)
+
+        var attachments: [MessageAttachment] = []
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW {
+            let rawFilename = columnText(statement, index: 1)
+            let transferName = columnText(statement, index: 4)
+            let fallbackName = rawFilename.map {
+                URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath)
+                    .lastPathComponent
+            }
+            attachments.append(
+                MessageAttachment(
+                    id: sqlite3_column_int64(statement, 0),
+                    name: transferName ?? fallbackName ?? "Attachment",
+                    localURL: rawFilename.map {
+                        URL(
+                            fileURLWithPath:
+                                ($0 as NSString).expandingTildeInPath
+                        )
+                    },
+                    uti: columnText(statement, index: 2),
+                    mimeType: columnText(statement, index: 3),
+                    byteCount: sqlite3_column_int64(statement, 5),
+                    isSticker: sqlite3_column_int(statement, 6) != 0
+                )
+            )
+            result = sqlite3_step(statement)
+        }
+
+        guard result == SQLITE_DONE else {
+            throw MessagesReaderError.databaseError(errorMessage(database))
+        }
+        sqlite3_reset(statement)
+        sqlite3_clear_bindings(statement)
+        return attachments
     }
 
     private func openDatabase() throws -> OpaquePointer {

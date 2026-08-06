@@ -51,8 +51,19 @@ struct PersonHistoryMessage: Identifiable, Sendable {
     let sender: String
     let date: Date
     let text: String
+    let attachments: [MessageAttachment]
 
     var isFromMe: Bool { sender == "Me" }
+}
+
+struct MessageAttachment: Identifiable, Sendable {
+    let id: Int64
+    let name: String
+    let localURL: URL?
+    let uti: String?
+    let mimeType: String?
+    let byteCount: Int64
+    let isSticker: Bool
 }
 
 struct ConversationWindow: Identifiable, Sendable {
