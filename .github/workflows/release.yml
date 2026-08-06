@@ -83,7 +83,8 @@ jobs:
           codesign -f -o runtime --timestamp -s "$SIGN_IDENTITY" "$SPARKLE/Versions/B/Updater.app"
           codesign -f -o runtime --timestamp -s "$SIGN_IDENTITY" "$SPARKLE"
           codesign -f -o runtime --timestamp -s "$SIGN_IDENTITY" "$APP/Contents/MacOS/msgtool"
-          codesign -f -o runtime --timestamp -s "$SIGN_IDENTITY" "$APP"
+          # Preserve the Contacts entitlement applied by xcodebuild.
+          codesign -f -o runtime --timestamp --preserve-metadata=entitlements -s "$SIGN_IDENTITY" "$APP"
           codesign --verify --deep --strict "$APP"
           codesign -dv "$APP" 2>&1 | grep TeamIdentifier
 
